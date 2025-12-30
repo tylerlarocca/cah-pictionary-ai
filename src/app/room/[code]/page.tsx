@@ -8,6 +8,7 @@ type Player = {
   id: string;
   display_name: string;
   is_host: boolean;
+  is_ready: boolean;
   is_active: boolean;
   created_at: string;
 };
@@ -27,17 +28,82 @@ export default function RoomPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
   const [roomId, setRoomId] = useState<string | null>(null);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [currentRound, setCurrentRound] = useState<Round | null>(null);
-
-  const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-
   // MVP "session" from localStorage
   const isHost =
     typeof window !== "undefined" && localStorage.getItem("isHost") === "true";
   const playerId =
     typeof window !== "undefined" ? localStorage.getItem("playerId") : null;
+
+  const [players, setPlayers] = useState<Player[]>([]);
+  const activeCount = players.length;
+  const readyCount = players.filter((p) => p.is_ready).length;
+  const me = playerId ? players.find((p) => p.id === playerId) : undefined;
+  const iAmReady = !!me?.is_ready;
+
+  const [currentRound, setCurrentRound] = useState<Round | null>(null);
+
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  // ready up
+
+  const [togglingReady, setTogglingReady] = useState(false);
+  const [rerolling, setRerolling] = useState(false);
+
+  async function toggleReady() {
+    if (!playerId) {
+      setError("Missing player session. Go back and re-join the room.");
+      return;
+    }
+
+    setTogglingReady(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/players/ready", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ joinCode, playerId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to toggle ready.");
+      // realtime will update the list
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to toggle ready.";
+      setError(msg);
+    } finally {
+      setTogglingReady(false);
+    }
+  }
+
+  //re-roll
+  async function rerollPrompt() {
+    if (!playerId) {
+      setError("Missing player session. Go back and re-join the room.");
+      return;
+    }
+
+    setRerolling(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/rounds/reroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ joinCode, playerId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to reroll prompt.");
+      // realtime will update
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to reroll prompt.";
+      setError(msg);
+    } finally {
+      setRerolling(false);
+    }
+  }
 
   // 1) Look up room by join code
   useEffect(() => {
@@ -81,7 +147,7 @@ export default function RoomPage() {
     async function loadPlayers() {
       const { data, error } = await supabase
         .from("players")
-        .select("id, display_name, is_host, is_active, created_at")
+        .select("id, display_name, is_host, is_ready, is_active, created_at")
         .eq("room_id", roomId)
         .eq("is_active", true)
         .order("created_at", { ascending: true });
@@ -230,7 +296,8 @@ export default function RoomPage() {
                 className="flex items-center justify-between rounded-xl border border-white/10 bg-black/20 px-4 py-2"
               >
                 <span className="font-medium">
-                  {p.display_name} {p.is_host ? "👑" : ""}
+                  {p.display_name} {p.is_host ? "👑" : ""}{" "}
+                  {p.is_ready ? "✅" : ""}
                 </span>
               </li>
             ))}
@@ -246,18 +313,51 @@ export default function RoomPage() {
           <div className="flex items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Round</h2>
 
-            {isHost && (
+            <div className="flex items-center gap-2">
               <button
-                className="rounded-xl bg-white text-black px-4 py-2 font-medium disabled:opacity-60"
-                onClick={startRound}
-                disabled={starting}
+                className="rounded-xl border border-white/15 px-4 py-2 font-medium disabled:opacity-60"
+                onClick={toggleReady}
+                disabled={togglingReady}
+                title="Ready up"
               >
-                {starting
-                  ? "Starting..."
-                  : currentRound
-                  ? "Start next round"
-                  : "Start round"}
+                {togglingReady ? "..." : iAmReady ? "Unready" : "Ready"}
               </button>
+            </div>
+
+            {isHost && (
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Round</h2>
+                  <p className="text-xs text-white/60 mt-1">
+                    Ready: {readyCount}/{activeCount}
+                  </p>
+                </div>
+                {isHost && currentRound?.phase === "PROMPT" && (
+                  <button
+                    className="rounded-xl border border-white/15 px-4 py-2 font-medium disabled:opacity-60"
+                    onClick={rerollPrompt}
+                    disabled={rerolling}
+                    title="Reroll the prompt"
+                  >
+                    {rerolling ? "Rerolling..." : "Reroll"}
+                  </button>
+                )}
+
+                {isHost && (
+                  <button
+                    className="rounded-xl bg-white text-black px-4 py-2 font-medium disabled:opacity-60"
+                    onClick={startRound}
+                    disabled={starting}
+                    title="Start the next round manually"
+                  >
+                    {starting
+                      ? "Starting..."
+                      : currentRound
+                      ? "Start next round"
+                      : "Start round"}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
