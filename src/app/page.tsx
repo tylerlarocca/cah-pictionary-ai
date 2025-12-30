@@ -1,65 +1,127 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+export default function HomePage() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<"create" | "join" | null>(null);
+
+  async function createRoom() {
+    setError(null);
+    setLoading("create");
+    try {
+      const res = await fetch("/api/rooms/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to create room.");
+
+      // store player session locally (MVP)
+      localStorage.setItem("playerId", data.playerId);
+      localStorage.setItem("joinCode", data.joinCode);
+      localStorage.setItem("isHost", "true");
+
+      router.push(`/room/${data.joinCode}`);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("Failed to start round.");
+      }
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function joinRoom() {
+    setError(null);
+    setLoading("join");
+    try {
+      const res = await fetch("/api/rooms/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, joinCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to join room.");
+
+      localStorage.setItem("playerId", data.playerId);
+      localStorage.setItem("joinCode", data.joinCode);
+      localStorage.setItem("isHost", "false");
+
+      router.push(`/room/${data.joinCode}`);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("Failed to start round.");
+      }
+    } finally {
+      setLoading(null);
+    }
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="min-h-screen flex items-center justify-center p-6">
+      <div className="w-full max-w-md space-y-6 rounded-2xl border border-white/10 bg-white/5 p-6">
+        <div>
+          <h1 className="text-2xl font-semibold">AI Pictionary Party</h1>
+          <p className="text-sm text-white/70">
+            Create a private room, invite friends, and vote on the funniest AI
+            image.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        <label className="block space-y-2">
+          <span className="text-sm text-white/80">Your name</span>
+          <input
+            className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 outline-none"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Tyler"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            className="rounded-xl bg-white text-black px-4 py-2 font-medium disabled:opacity-60"
+            onClick={createRoom}
+            disabled={loading !== null}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            {loading === "create" ? "Creating..." : "Create room"}
+          </button>
+
+          <button
+            className="rounded-xl border border-white/15 px-4 py-2 font-medium disabled:opacity-60"
+            onClick={joinRoom}
+            disabled={loading !== null}
           >
-            Documentation
-          </a>
+            {loading === "join" ? "Joining..." : "Join room"}
+          </button>
         </div>
-      </main>
-    </div>
+
+        <label className="block space-y-2">
+          <span className="text-sm text-white/80">Join code</span>
+          <input
+            className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 outline-none uppercase tracking-widest"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            placeholder="ABCD"
+          />
+        </label>
+
+        {error ? (
+          <p className="text-sm text-red-300 border border-red-500/30 bg-red-500/10 rounded-xl p-3">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </main>
   );
 }
