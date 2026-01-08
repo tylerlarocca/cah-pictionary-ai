@@ -1,3 +1,4 @@
+// src/app/api/rounds/advance/route.ts
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -9,11 +10,12 @@ export async function POST(req: Request) {
     const code = (joinCode ?? "").trim().toUpperCase();
     const pid = (playerId ?? "").trim();
 
-    if (!code || !pid)
+    if (!code || !pid) {
       return NextResponse.json(
         { error: "Missing joinCode or playerId." },
         { status: 400 }
       );
+    }
 
     const db = supabaseServer();
 
@@ -27,13 +29,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Room not found." }, { status: 404 });
     if (room.status !== "IN_GAME") return NextResponse.json({ ok: true });
 
-    // allow any active player to advance (host-only is fine too, but this prevents stalls)
+    // ensure caller is an active player (prevents random internet calls)
     const { data: player } = await db
       .from("players")
       .select("id, is_active")
       .eq("id", pid)
       .eq("room_id", room.id)
       .single();
+
     if (!player?.is_active)
       return NextResponse.json(
         { error: "Player not active." },
@@ -55,35 +58,47 @@ export async function POST(req: Request) {
         { status: 400 }
       );
 
-    // PROMPT -> GENERATING (45s)
+    // PROMPT -> GENERATING (set ends_at to now+round_seconds in SAME UPDATE)
     if (round.phase === "PROMPT") {
-      const ends = new Date(
-        Date.now() + (room.round_seconds ?? 45) * 1000
-      ).toISOString();
-      await db
+      const seconds = room.round_seconds ?? 45;
+      const ends = new Date(Date.now() + seconds * 1000).toISOString();
+
+      const { data: updated } = await db
         .from("rounds")
         .update({ phase: "GENERATING", phase_ends_at: ends })
-        .eq("id", round.id);
-      return NextResponse.json({ ok: true, phase: "GENERATING" });
+        .eq("id", round.id)
+        .eq("phase", "PROMPT") // ✅ idempotent guard
+        .select("id, phase, phase_ends_at")
+        .maybeSingle();
+
+      // If another client already advanced it, updated will be null — that's fine.
+      return NextResponse.json({ ok: true, updated });
     }
 
-    // GENERATING -> REVEAL (no timer for now)
+    // GENERATING -> REVEAL (clear ends_at in SAME UPDATE)
     if (round.phase === "GENERATING") {
-      await db
+      const { data: updated } = await db
         .from("rounds")
         .update({ phase: "REVEAL", phase_ends_at: null })
-        .eq("id", round.id);
-      return NextResponse.json({ ok: true, phase: "REVEAL" });
+        .eq("id", round.id)
+        .eq("phase", "GENERATING") // ✅ idempotent guard
+        .select("id, phase, phase_ends_at")
+        .maybeSingle();
+
+      return NextResponse.json({ ok: true, updated });
     }
 
-    // REVEAL -> RESULTS
+    // REVEAL -> RESULTS (manual host button, no timer)
     if (round.phase === "REVEAL") {
-      await db
+      const { data: updated } = await db
         .from("rounds")
         .update({ phase: "RESULTS", phase_ends_at: null })
-        .eq("id", round.id);
+        .eq("id", round.id)
+        .eq("phase", "REVEAL")
+        .select("id, phase")
+        .maybeSingle();
 
-      // if last round, end game
+      // If last round, end game
       if (round.round_number >= (room.total_rounds ?? 3)) {
         await db
           .from("rooms")
@@ -91,7 +106,7 @@ export async function POST(req: Request) {
           .eq("id", room.id);
       }
 
-      return NextResponse.json({ ok: true, phase: "RESULTS" });
+      return NextResponse.json({ ok: true, updated });
     }
 
     return NextResponse.json({ ok: true });
